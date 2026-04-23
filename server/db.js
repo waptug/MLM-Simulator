@@ -50,9 +50,29 @@ db.exec(`
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 
+  CREATE TABLE IF NOT EXISTS customers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    member_id INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+    first_name TEXT NOT NULL,
+    last_name TEXT NOT NULL,
+    email TEXT,
+    phone TEXT,
+    city TEXT,
+    state TEXT,
+    status TEXT NOT NULL DEFAULT 'Prospect',
+    source TEXT,
+    birthday TEXT,
+    last_contact_date TEXT,
+    next_follow_up_date TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
   CREATE TABLE IF NOT EXISTS sales (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     member_id INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+    customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
     product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
     quantity INTEGER NOT NULL DEFAULT 1,
     unit_price REAL NOT NULL DEFAULT 0,
@@ -64,10 +84,18 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_products_active ON products(active);
+  CREATE INDEX IF NOT EXISTS idx_customers_member_id ON customers(member_id);
+  CREATE INDEX IF NOT EXISTS idx_customers_status ON customers(status);
   CREATE INDEX IF NOT EXISTS idx_sales_member_id ON sales(member_id);
   CREATE INDEX IF NOT EXISTS idx_sales_product_id ON sales(product_id);
   CREATE INDEX IF NOT EXISTS idx_sales_sale_date ON sales(sale_date);
 `);
+
+const saleColumns = db.prepare('PRAGMA table_info(sales)').all().map((column) => column.name);
+if (!saleColumns.includes('customer_id')) {
+  db.prepare('ALTER TABLE sales ADD COLUMN customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL').run();
+}
+db.prepare('CREATE INDEX IF NOT EXISTS idx_sales_customer_id ON sales(customer_id)').run();
 
 const count = db.prepare('SELECT COUNT(*) AS total FROM members').get().total;
 
@@ -270,6 +298,75 @@ if (productCount === 0) {
   }
 }
 
+const customerCount = db.prepare('SELECT COUNT(*) AS total FROM customers').get().total;
+
+if (customerCount === 0) {
+  const memberRows = db.prepare('SELECT id FROM members ORDER BY id LIMIT 3').all();
+  const insertCustomer = db.prepare(`
+    INSERT INTO customers (
+      member_id, first_name, last_name, email, phone, city, state, status, source,
+      birthday, last_contact_date, next_follow_up_date, notes
+    ) VALUES (
+      @memberId, @firstName, @lastName, @email, @phone, @city, @state, @status, @source,
+      @birthday, @lastContactDate, @nextFollowUpDate, @notes
+    )
+  `);
+
+  if (memberRows.length) {
+    const retailId = insertCustomer.run({
+      memberId: memberRows[0].id,
+      firstName: 'Riley',
+      lastName: 'Stone',
+      email: 'riley.customer@example.com',
+      phone: '555-0201',
+      city: 'Austin',
+      state: 'TX',
+      status: 'Customer',
+      source: 'Launch event',
+      birthday: '',
+      lastContactDate: '2026-04-01',
+      nextFollowUpDate: '2026-05-01',
+      notes: 'Bought two starter kits.'
+    }).lastInsertRowid;
+    const autoshipId = insertCustomer.run({
+      memberId: memberRows[1]?.id || memberRows[0].id,
+      firstName: 'Casey',
+      lastName: 'Hill',
+      email: 'casey.customer@example.com',
+      phone: '555-0202',
+      city: 'Portland',
+      state: 'OR',
+      status: 'Preferred',
+      source: 'Referral',
+      birthday: '',
+      lastContactDate: '2026-04-12',
+      nextFollowUpDate: '2026-05-12',
+      notes: 'Monthly nutrition reorder.'
+    }).lastInsertRowid;
+    const onlineId = insertCustomer.run({
+      memberId: memberRows[2]?.id || memberRows[0].id,
+      firstName: 'Taylor',
+      lastName: 'Nguyen',
+      email: 'taylor.customer@example.com',
+      phone: '555-0203',
+      city: 'Denver',
+      state: 'CO',
+      status: 'Lead',
+      source: 'Website',
+      birthday: '',
+      lastContactDate: '2026-04-18',
+      nextFollowUpDate: '2026-04-30',
+      notes: 'Interested in digital coaching.'
+    }).lastInsertRowid;
+
+    const saleRows = db.prepare('SELECT id FROM sales ORDER BY id LIMIT 3').all();
+    const updateSale = db.prepare('UPDATE sales SET customer_id = ? WHERE id = ?');
+    if (saleRows[0]) updateSale.run(retailId, saleRows[0].id);
+    if (saleRows[1]) updateSale.run(autoshipId, saleRows[1].id);
+    if (saleRows[2]) updateSale.run(onlineId, saleRows[2].id);
+  }
+}
+
 export function mapMember(row) {
   if (!row) return null;
   return {
@@ -311,6 +408,31 @@ export function mapProduct(row) {
   };
 }
 
+export function mapCustomer(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    memberId: row.member_id,
+    memberName: row.member_name || '',
+    firstName: row.first_name,
+    lastName: row.last_name,
+    email: row.email || '',
+    phone: row.phone || '',
+    city: row.city || '',
+    state: row.state || '',
+    status: row.status,
+    source: row.source || '',
+    birthday: row.birthday || '',
+    lastContactDate: row.last_contact_date || '',
+    nextFollowUpDate: row.next_follow_up_date || '',
+    notes: row.notes || '',
+    salesVolume: row.sales_volume || 0,
+    orderCount: row.order_count || 0,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
 export function mapSale(row) {
   if (!row) return null;
   const lineTotal = row.quantity * row.unit_price;
@@ -318,8 +440,10 @@ export function mapSale(row) {
   return {
     id: row.id,
     memberId: row.member_id,
+    customerId: row.customer_id,
     productId: row.product_id,
     memberName: row.member_name || '',
+    customerName: row.customer_full_name || row.customer_name || '',
     productName: row.product_name || '',
     sku: row.sku || '',
     quantity: row.quantity,
@@ -328,7 +452,6 @@ export function mapSale(row) {
     lineTotal,
     commission,
     saleDate: row.sale_date,
-    customerName: row.customer_name || '',
     notes: row.notes || '',
     createdAt: row.created_at
   };

@@ -14,6 +14,7 @@ import {
   Save,
   Search,
   ShoppingCart,
+  UserPlus,
   UserRound,
   UsersRound
 } from 'lucide-react';
@@ -50,12 +51,29 @@ const blankProduct = {
 
 const blankSale = {
   memberId: '',
+  customerId: '',
   productId: '',
   quantity: 1,
   unitPrice: '',
   commissionRate: '',
   saleDate: new Date().toISOString().slice(0, 10),
   customerName: '',
+  notes: ''
+};
+
+const blankCustomer = {
+  memberId: '',
+  firstName: '',
+  lastName: '',
+  email: '',
+  phone: '',
+  city: '',
+  state: '',
+  status: 'Lead',
+  source: '',
+  birthday: '',
+  lastContactDate: '',
+  nextFollowUpDate: '',
   notes: ''
 };
 
@@ -374,12 +392,140 @@ function ProductForm({ selectedProduct, onSaved, onCancel }) {
   );
 }
 
-function SaleForm({ members, products, onSaved }) {
+function CustomerForm({ members, selectedCustomer, onSaved, onCancel }) {
+  const [form, setForm] = useState(blankCustomer);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setError('');
+    setForm(selectedCustomer ? { ...blankCustomer, ...selectedCustomer } : blankCustomer);
+  }, [selectedCustomer]);
+
+  const setField = (field, value) => setForm((current) => ({ ...current, [field]: value }));
+
+  async function submit(event) {
+    event.preventDefault();
+    setSaving(true);
+    setError('');
+    const url = selectedCustomer ? `/api/customers/${selectedCustomer.id}` : '/api/customers';
+    const method = selectedCustomer ? 'PUT' : 'POST';
+    const response = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(form)
+    });
+    const payload = await response.json();
+    setSaving(false);
+    if (!response.ok) {
+      setError(payload.error || 'Unable to save customer.');
+      return;
+    }
+    onSaved(payload.customer);
+    if (!selectedCustomer) setForm(blankCustomer);
+  }
+
+  return (
+    <form className="member-form" onSubmit={submit}>
+      <div className="section-title">
+        <UserPlus size={18} />
+        <h2>{selectedCustomer ? 'Customer Detail' : 'Add Customer'}</h2>
+      </div>
+      <div className="form-grid">
+        <label>
+          Owning member
+          <select value={form.memberId} onChange={(event) => setField('memberId', event.target.value)} required>
+            <option value="">Select member</option>
+            {members.map((member) => (
+              <option key={member.id} value={member.id}>
+                {fullName(member)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Status
+          <select value={form.status} onChange={(event) => setField('status', event.target.value)}>
+            <option>Lead</option>
+            <option>Prospect</option>
+            <option>Customer</option>
+            <option>Preferred</option>
+            <option>Inactive</option>
+          </select>
+        </label>
+        <label>
+          First name
+          <input value={form.firstName} onChange={(event) => setField('firstName', event.target.value)} required />
+        </label>
+        <label>
+          Last name
+          <input value={form.lastName} onChange={(event) => setField('lastName', event.target.value)} required />
+        </label>
+        <label>
+          Email
+          <input type="email" value={form.email} onChange={(event) => setField('email', event.target.value)} />
+        </label>
+        <label>
+          Phone
+          <input value={form.phone} onChange={(event) => setField('phone', event.target.value)} />
+        </label>
+        <label>
+          City
+          <input value={form.city} onChange={(event) => setField('city', event.target.value)} />
+        </label>
+        <label>
+          State
+          <input value={form.state} onChange={(event) => setField('state', event.target.value)} />
+        </label>
+        <label>
+          Source
+          <input value={form.source} onChange={(event) => setField('source', event.target.value)} />
+        </label>
+        <label>
+          Birthday
+          <input type="date" value={form.birthday} onChange={(event) => setField('birthday', event.target.value)} />
+        </label>
+        <label>
+          Last contact
+          <input type="date" value={form.lastContactDate} onChange={(event) => setField('lastContactDate', event.target.value)} />
+        </label>
+        <label>
+          Next follow-up
+          <input type="date" value={form.nextFollowUpDate} onChange={(event) => setField('nextFollowUpDate', event.target.value)} />
+        </label>
+      </div>
+      <label>
+        Notes
+        <textarea rows="3" value={form.notes} onChange={(event) => setField('notes', event.target.value)} />
+      </label>
+      {error ? <p className="error">{error}</p> : null}
+      <div className="form-actions">
+        <button type="submit" className="primary" disabled={saving}>
+          <Save size={17} />
+          {saving ? 'Saving' : 'Save'}
+        </button>
+        {selectedCustomer ? (
+          <button type="button" onClick={onCancel}>
+            <Plus size={17} />
+            New
+          </button>
+        ) : null}
+      </div>
+    </form>
+  );
+}
+
+function customerName(customer) {
+  return `${customer.firstName} ${customer.lastName}`.trim();
+}
+
+function SaleForm({ members, products, customers, onSaved }) {
   const [form, setForm] = useState(blankSale);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
   const selectedProduct = products.find((product) => product.id === Number(form.productId));
+  const memberCustomers = customers.filter((customer) => customer.memberId === Number(form.memberId));
 
   function setField(field, value) {
     setForm((current) => {
@@ -388,6 +534,9 @@ function SaleForm({ members, products, onSaved }) {
         const product = products.find((item) => item.id === Number(value));
         next.unitPrice = product?.unitPrice ?? '';
         next.commissionRate = product?.commissionRate ?? '';
+      }
+      if (field === 'memberId') {
+        next.customerId = '';
       }
       return next;
     });
@@ -434,6 +583,17 @@ function SaleForm({ members, products, onSaved }) {
           </select>
         </label>
         <label>
+          Customer
+          <select value={form.customerId} onChange={(event) => setField('customerId', event.target.value)}>
+            <option value="">Unassigned customer</option>
+            {memberCustomers.map((customer) => (
+              <option key={customer.id} value={customer.id}>
+                {customerName(customer)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
           Product
           <select value={form.productId} onChange={(event) => setField('productId', event.target.value)} required>
             <option value="">Select product</option>
@@ -447,12 +607,12 @@ function SaleForm({ members, products, onSaved }) {
           </select>
         </label>
         <label>
-          Quantity
-          <input type="number" min="1" step="1" value={form.quantity} onChange={(event) => setField('quantity', event.target.value)} />
-        </label>
-        <label>
           Sale date
           <input type="date" value={form.saleDate} onChange={(event) => setField('saleDate', event.target.value)} required />
+        </label>
+        <label>
+          Quantity
+          <input type="number" min="1" step="1" value={form.quantity} onChange={(event) => setField('quantity', event.target.value)} />
         </label>
         <label>
           Unit price
@@ -471,7 +631,7 @@ function SaleForm({ members, products, onSaved }) {
         </label>
       </div>
       <label>
-        Customer name
+        Customer name override
         <input value={form.customerName} onChange={(event) => setField('customerName', event.target.value)} />
       </label>
       <label>
@@ -662,7 +822,7 @@ function InventoryTab({ products, selectedProductId, setSelectedProductId, loadI
   );
 }
 
-function SalesTab({ members, products, sales, loadInventory }) {
+function SalesLedger({ members, products, customers, sales, loadCommerce }) {
   return (
     <section className="inventory-grid">
       <div className="panel inventory-table-panel">
@@ -674,11 +834,178 @@ function SalesTab({ members, products, sales, loadInventory }) {
           <div className="table-row sale-row table-head">
             <span>Date</span>
             <span>Member</span>
-            <span>Product</span>
+            <span>Customer / Product</span>
             <span>Total</span>
             <span>Commission</span>
           </div>
           {sales.map((sale) => (
+            <div key={sale.id} className="table-row sale-row">
+              <span>{sale.saleDate}</span>
+              <span>{sale.memberName}</span>
+              <span>
+                <strong>{sale.customerName || 'Unassigned customer'}</strong>
+                <small>{sale.productName} · {sale.quantity} × {money.format(sale.unitPrice)}</small>
+              </span>
+              <span>{money.format(sale.lineTotal)}</span>
+              <span>{money.format(sale.commission)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="panel form-panel">
+        <SaleForm members={members} products={products} customers={customers} onSaved={loadCommerce} />
+      </div>
+    </section>
+  );
+}
+
+function CustomersScreen({ members, customers, selectedCustomerId, setSelectedCustomerId, loadCommerce, onOpenReport }) {
+  const selectedCustomer = customers.find((customer) => customer.id === selectedCustomerId) || null;
+
+  return (
+    <section className="inventory-grid">
+      <div className="panel inventory-table-panel">
+        <div className="panel-head">
+          <div className="section-title">
+            <UsersRound size={18} />
+            <h2>Customer Management</h2>
+          </div>
+          <button className="primary" onClick={() => setSelectedCustomerId(null)}>
+            <Plus size={17} />
+            Add customer
+          </button>
+        </div>
+        <div className="data-table">
+          <div className="table-row customer-row table-head">
+            <span>Customer</span>
+            <span>Member</span>
+            <span>Follow-up</span>
+            <span>Sales</span>
+          </div>
+          {customers.map((customer) => (
+            <button
+              key={customer.id}
+              className={`table-row customer-row ${selectedCustomerId === customer.id ? 'selected' : ''}`}
+              onClick={() => setSelectedCustomerId(customer.id)}
+            >
+              <span>
+                <strong>{customerName(customer)}</strong>
+                <small>{customer.status} · {customer.email || customer.phone || 'No contact info'}</small>
+              </span>
+              <span>{customer.memberName}</span>
+              <span>{customer.nextFollowUpDate || 'Not set'}</span>
+              <span>{money.format(customer.salesVolume)}</span>
+            </button>
+          ))}
+        </div>
+        {selectedCustomer ? (
+          <div className="form-actions customer-actions">
+            <button type="button" className="primary" onClick={() => onOpenReport(selectedCustomer.id)}>
+              <BarChart3 size={17} />
+              Customer report
+            </button>
+          </div>
+        ) : null}
+      </div>
+      <div className="panel form-panel">
+        <CustomerForm
+          members={members}
+          selectedCustomer={selectedCustomer}
+          onSaved={(customer) => {
+            setSelectedCustomerId(customer.id);
+            loadCommerce();
+          }}
+          onCancel={() => setSelectedCustomerId(null)}
+        />
+      </div>
+    </section>
+  );
+}
+
+function CustomerReport({ report, onBack }) {
+  if (!report) {
+    return (
+      <section className="panel full-panel">
+        <button type="button" className="primary" onClick={onBack}>
+          <ChevronRight size={17} />
+          Customers
+        </button>
+      </section>
+    );
+  }
+
+  return (
+    <section className="report-grid">
+      <div className="panel">
+        <div className="panel-head">
+          <div className="section-title">
+            <BarChart3 size={18} />
+            <h2>{customerName(report.customer)} Report</h2>
+          </div>
+          <button type="button" onClick={onBack}>
+            Customers
+          </button>
+        </div>
+        <dl className="facts">
+          <div>
+            <dt>Managed by</dt>
+            <dd>{report.customer.memberName}</dd>
+          </div>
+          <div>
+            <dt>Status</dt>
+            <dd>{report.customer.status}</dd>
+          </div>
+          <div>
+            <dt>Lifetime sales</dt>
+            <dd>{money.format(report.customer.salesVolume)}</dd>
+          </div>
+          <div>
+            <dt>Orders</dt>
+            <dd>{report.customer.orderCount}</dd>
+          </div>
+          <div>
+            <dt>Next follow-up</dt>
+            <dd>{report.customer.nextFollowUpDate || 'Not set'}</dd>
+          </div>
+        </dl>
+      </div>
+      <div className="panel">
+        <div className="section-title">
+          <Package size={18} />
+          <h2>Product Breakdown</h2>
+        </div>
+        <div className="data-table spaced-table">
+          <div className="table-row commission-row table-head">
+            <span>Product</span>
+            <span>Units</span>
+            <span>Sales</span>
+          </div>
+          {report.productBreakdown.map((row) => (
+            <div key={row.product_id} className="table-row commission-row">
+              <span>
+                <strong>{row.product_name}</strong>
+                <small>{row.sku}</small>
+              </span>
+              <span>{row.units}</span>
+              <span>{money.format(row.sales_volume)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="panel full-span">
+        <div className="section-title">
+          <ClipboardList size={18} />
+          <h2>Customer Sales</h2>
+        </div>
+        <div className="data-table spaced-table">
+          <div className="table-row sale-row table-head">
+            <span>Date</span>
+            <span>Member</span>
+            <span>Product</span>
+            <span>Total</span>
+            <span>Commission</span>
+          </div>
+          {report.sales.map((sale) => (
             <div key={sale.id} className="table-row sale-row">
               <span>{sale.saleDate}</span>
               <span>{sale.memberName}</span>
@@ -692,10 +1019,84 @@ function SalesTab({ members, products, sales, loadInventory }) {
           ))}
         </div>
       </div>
-      <div className="panel form-panel">
-        <SaleForm members={members} products={products} onSaved={loadInventory} />
+    </section>
+  );
+}
+
+function CustomerSummaryScreen({ customerSummary }) {
+  return (
+    <section className="panel full-panel">
+      <div className="section-title">
+        <UsersRound size={18} />
+        <h2>Customer Sub Report</h2>
+      </div>
+      <div className="data-table spaced-table">
+        <div className="table-row commission-row table-head">
+          <span>Member</span>
+          <span>Customers</span>
+          <span>Customer sales</span>
+        </div>
+        {customerSummary.byMember.map((row) => (
+          <div key={row.member_id} className="table-row commission-row">
+            <span>{row.member_name}</span>
+            <span>{row.customer_count}</span>
+            <span>{money.format(row.sales_volume)}</span>
+          </div>
+        ))}
       </div>
     </section>
+  );
+}
+
+function SalesTab({
+  members,
+  products,
+  customers,
+  sales,
+  customerSummary,
+  customerReport,
+  selectedCustomerId,
+  setSelectedCustomerId,
+  loadCommerce,
+  loadCustomerReport
+}) {
+  const [screen, setScreen] = useState('ledger');
+
+  async function openReport(customerId) {
+    await loadCustomerReport(customerId);
+    setScreen('report');
+  }
+
+  return (
+    <>
+      <nav className="subtabs" aria-label="Sales sections">
+        <button className={screen === 'ledger' ? 'active' : ''} onClick={() => setScreen('ledger')}>
+          <ShoppingCart size={16} />
+          Ledger
+        </button>
+        <button className={screen === 'customers' ? 'active' : ''} onClick={() => setScreen('customers')}>
+          <UsersRound size={16} />
+          Customers
+        </button>
+        <button className={screen === 'summary' ? 'active' : ''} onClick={() => setScreen('summary')}>
+          <BarChart3 size={16} />
+          Customer reports
+        </button>
+      </nav>
+      {screen === 'ledger' ? <SalesLedger members={members} products={products} customers={customers} sales={sales} loadCommerce={loadCommerce} /> : null}
+      {screen === 'customers' ? (
+        <CustomersScreen
+          members={members}
+          customers={customers}
+          selectedCustomerId={selectedCustomerId}
+          setSelectedCustomerId={setSelectedCustomerId}
+          loadCommerce={loadCommerce}
+          onOpenReport={openReport}
+        />
+      ) : null}
+      {screen === 'report' ? <CustomerReport report={customerReport} onBack={() => setScreen('customers')} /> : null}
+      {screen === 'summary' ? <CustomerSummaryScreen customerSummary={customerSummary} /> : null}
+    </>
   );
 }
 
@@ -727,10 +1128,14 @@ function CommissionsTab({ inventorySummary }) {
 function App() {
   const [members, setMembers] = useState([]);
   const [products, setProducts] = useState([]);
+  const [customers, setCustomers] = useState([]);
   const [sales, setSales] = useState([]);
   const [inventorySummary, setInventorySummary] = useState({ summary: {}, memberCommissions: [] });
+  const [customerSummary, setCustomerSummary] = useState({ summary: {}, byMember: [] });
+  const [customerReport, setCustomerReport] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [selectedProductId, setSelectedProductId] = useState(null);
+  const [selectedCustomerId, setSelectedCustomerId] = useState(null);
   const [activeTab, setActiveTab] = useState('downline');
   const [loading, setLoading] = useState(true);
 
@@ -741,24 +1146,36 @@ function App() {
     setSelectedId(nextSelectedId ?? selectedId ?? payload.members[0]?.id ?? null);
   }
 
-  async function loadInventory() {
-    const [productsResponse, salesResponse, summaryResponse] = await Promise.all([
+  async function loadCommerce() {
+    const [productsResponse, customersResponse, salesResponse, summaryResponse, customerSummaryResponse] = await Promise.all([
       fetch('/api/products'),
+      fetch('/api/customers'),
       fetch('/api/sales'),
-      fetch('/api/inventory-summary')
+      fetch('/api/inventory-summary'),
+      fetch('/api/customer-summary')
     ]);
-    const [productsPayload, salesPayload, summaryPayload] = await Promise.all([
+    const [productsPayload, customersPayload, salesPayload, summaryPayload, customerSummaryPayload] = await Promise.all([
       productsResponse.json(),
+      customersResponse.json(),
       salesResponse.json(),
-      summaryResponse.json()
+      summaryResponse.json(),
+      customerSummaryResponse.json()
     ]);
     setProducts(productsPayload.products);
+    setCustomers(customersPayload.customers);
     setSales(salesPayload.sales);
     setInventorySummary(summaryPayload);
+    setCustomerSummary(customerSummaryPayload);
+  }
+
+  async function loadCustomerReport(customerId) {
+    const response = await fetch(`/api/customers/${customerId}/report`);
+    const payload = await response.json();
+    setCustomerReport(payload);
   }
 
   useEffect(() => {
-    Promise.all([loadMembers(), loadInventory()]).finally(() => setLoading(false));
+    Promise.all([loadMembers(), loadCommerce()]).finally(() => setLoading(false));
   }, []);
 
   const membersById = useMemo(() => new Map(members.map((member) => [member.id, member])), [members]);
@@ -766,6 +1183,7 @@ function App() {
   const totalGroupVolume = members.reduce((total, member) => total + Number(member.groupVolume || 0), 0);
   const maxDepth = members.reduce((max, member) => Math.max(max, memberDepth(member, membersById)), 0);
   const summary = inventorySummary.summary || {};
+  const customerStats = customerSummary.summary || {};
 
   if (loading) return <div className="loading">Loading downline manager...</div>;
 
@@ -813,6 +1231,7 @@ function App() {
         <Stat icon={Network} label="Levels" value={maxDepth + 1} />
         <Stat icon={CircleDollarSign} label="Group volume" value={money.format(totalGroupVolume)} />
         <Stat icon={Package} label="Products" value={summary.productCount || 0} />
+        <Stat icon={UsersRound} label="Customers" value={customerStats.customerCount || 0} />
         <Stat icon={ClipboardList} label="Inventory value" value={money.format(summary.inventoryValue || 0)} />
         <Stat icon={ShoppingCart} label="Sales volume" value={money.format(summary.salesVolume || 0)} />
         <Stat icon={BarChart3} label="Commissions" value={money.format(summary.commissions || 0)} />
@@ -822,9 +1241,22 @@ function App() {
         <DownlineTab members={members} selectedId={selectedId} setSelectedId={setSelectedId} loadMembers={loadMembers} />
       ) : null}
       {activeTab === 'inventory' ? (
-        <InventoryTab products={products} selectedProductId={selectedProductId} setSelectedProductId={setSelectedProductId} loadInventory={loadInventory} />
+        <InventoryTab products={products} selectedProductId={selectedProductId} setSelectedProductId={setSelectedProductId} loadInventory={loadCommerce} />
       ) : null}
-      {activeTab === 'sales' ? <SalesTab members={members} products={products} sales={sales} loadInventory={loadInventory} /> : null}
+      {activeTab === 'sales' ? (
+        <SalesTab
+          members={members}
+          products={products}
+          customers={customers}
+          sales={sales}
+          customerSummary={customerSummary}
+          customerReport={customerReport}
+          selectedCustomerId={selectedCustomerId}
+          setSelectedCustomerId={setSelectedCustomerId}
+          loadCommerce={loadCommerce}
+          loadCustomerReport={loadCustomerReport}
+        />
+      ) : null}
       {activeTab === 'commissions' ? <CommissionsTab inventorySummary={inventorySummary} /> : null}
     </main>
   );

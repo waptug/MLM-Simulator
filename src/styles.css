@@ -133,6 +133,33 @@ h3 {
   color: white;
 }
 
+.subtabs {
+  display: flex;
+  gap: 8px;
+  margin: 0 auto 18px;
+  max-width: 1500px;
+  overflow-x: auto;
+}
+
+.subtabs button {
+  align-items: center;
+  background: #f7f6f2;
+  border: 1px solid #dedbd2;
+  border-radius: 8px;
+  color: #33413a;
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 12px;
+}
+
+.subtabs button.active {
+  background: #e4eefb;
+  border-color: #b8cde8;
+  color: #265b8f;
+}
+
 .stats-grid {
   display: grid;
   gap: 14px;
@@ -187,6 +214,18 @@ h3 {
 .full-panel {
   margin: 0 auto;
   max-width: 1500px;
+}
+
+.report-grid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(320px, 0.75fr) minmax(420px, 1.25fr);
+  margin: 0 auto;
+  max-width: 1500px;
+}
+
+.full-span {
+  grid-column: 1 / -1;
 }
 
 .panel {
@@ -546,6 +585,14 @@ button.table-row:hover,
   grid-template-columns: minmax(220px, 1fr) minmax(130px, 0.5fr) minmax(130px, 0.5fr);
 }
 
+.customer-row {
+  grid-template-columns: minmax(220px, 1.3fr) minmax(150px, 0.8fr) minmax(120px, 0.6fr) minmax(100px, 0.5fr);
+}
+
+.customer-actions {
+  margin-top: 14px;
+}
+
 .spaced-table {
   margin-top: 18px;
 }
@@ -585,6 +632,10 @@ button.table-row:hover,
   }
 
   .inventory-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .report-grid {
     grid-template-columns: 1fr;
   }
 
@@ -633,7 +684,8 @@ button.table-row:hover,
 
   .table-row,
   .sale-row,
-  .commission-row {
+  .commission-row,
+  .customer-row {
     grid-template-columns: minmax(180px, 1fr);
   }
 

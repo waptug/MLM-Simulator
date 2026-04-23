@@ -1,5 +1,5 @@
 import express from 'express';
-import { db, mapMember, mapProduct, mapSale } from './db.js';
+import { db, mapCustomer, mapMember, mapProduct, mapSale } from './db.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -15,10 +15,20 @@ const productFields = `
   id, sku, name, category, unit_price, commission_rate, stock_on_hand, reorder_level,
   active, notes, created_at, updated_at
 `;
+const customerFields = `
+  customers.id, customers.member_id, customers.first_name, customers.last_name, customers.email,
+  customers.phone, customers.city, customers.state, customers.status, customers.source,
+  customers.birthday, customers.last_contact_date, customers.next_follow_up_date,
+  customers.notes, customers.created_at, customers.updated_at,
+  members.first_name || ' ' || members.last_name AS member_name,
+  COALESCE(SUM(sales.quantity * sales.unit_price), 0) AS sales_volume,
+  COUNT(sales.id) AS order_count
+`;
 const saleFields = `
-  sales.id, sales.member_id, sales.product_id, sales.quantity, sales.unit_price,
+  sales.id, sales.member_id, sales.customer_id, sales.product_id, sales.quantity, sales.unit_price,
   sales.commission_rate, sales.sale_date, sales.customer_name, sales.notes, sales.created_at,
   members.first_name || ' ' || members.last_name AS member_name,
+  customers.first_name || ' ' || customers.last_name AS customer_full_name,
   products.name AS product_name,
   products.sku AS sku
 `;
@@ -62,6 +72,17 @@ function getProduct(id) {
   return mapProduct(db.prepare(`SELECT ${productFields} FROM products WHERE id = ?`).get(id));
 }
 
+function getCustomer(id) {
+  return mapCustomer(db.prepare(`
+    SELECT ${customerFields}
+    FROM customers
+    JOIN members ON members.id = customers.member_id
+    LEFT JOIN sales ON sales.customer_id = customers.id
+    WHERE customers.id = ?
+    GROUP BY customers.id
+  `).get(id));
+}
+
 function normalizeProduct(input) {
   return {
     sku: String(input.sku || '').trim().toUpperCase(),
@@ -84,9 +105,35 @@ function validateProduct(product) {
   return null;
 }
 
+function normalizeCustomer(input) {
+  return {
+    memberId: Number(input.memberId || 0),
+    firstName: String(input.firstName || '').trim(),
+    lastName: String(input.lastName || '').trim(),
+    email: String(input.email || '').trim(),
+    phone: String(input.phone || '').trim(),
+    city: String(input.city || '').trim(),
+    state: String(input.state || '').trim(),
+    status: String(input.status || 'Lead').trim(),
+    source: String(input.source || '').trim(),
+    birthday: String(input.birthday || '').trim(),
+    lastContactDate: String(input.lastContactDate || '').trim(),
+    nextFollowUpDate: String(input.nextFollowUpDate || '').trim(),
+    notes: String(input.notes || '').trim()
+  };
+}
+
+function validateCustomer(customer) {
+  if (!getMember(customer.memberId)) return 'Select a valid member owner.';
+  if (!customer.firstName || !customer.lastName) return 'Customer first and last name are required.';
+  if (!['Lead', 'Prospect', 'Customer', 'Preferred', 'Inactive'].includes(customer.status)) return 'Unsupported customer status.';
+  return null;
+}
+
 function normalizeSale(input) {
   return {
     memberId: Number(input.memberId || 0),
+    customerId: input.customerId ? Number(input.customerId) : null,
     productId: Number(input.productId || 0),
     quantity: Number.parseInt(input.quantity || 1, 10),
     unitPrice: Number(input.unitPrice || 0),
@@ -99,6 +146,11 @@ function normalizeSale(input) {
 
 function validateSale(sale) {
   if (!getMember(sale.memberId)) return 'Select a valid selling member.';
+  if (sale.customerId) {
+    const customer = getCustomer(sale.customerId);
+    if (!customer) return 'Select a valid customer.';
+    if (customer.memberId !== sale.memberId) return 'Selected customer belongs to a different member.';
+  }
   if (!getProduct(sale.productId)) return 'Select a valid product.';
   if (sale.quantity < 1) return 'Quantity must be at least 1.';
   if (sale.unitPrice < 0) return 'Unit price cannot be negative.';
@@ -226,11 +278,153 @@ app.put('/api/products/:id', (req, res) => {
   }
 });
 
+app.get('/api/customers', (req, res) => {
+  const memberId = req.query.memberId ? Number(req.query.memberId) : null;
+  const status = req.query.status ? String(req.query.status) : null;
+  const conditions = [];
+  const params = [];
+
+  if (memberId) {
+    conditions.push('customers.member_id = ?');
+    params.push(memberId);
+  }
+  if (status) {
+    conditions.push('customers.status = ?');
+    params.push(status);
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const customers = db.prepare(`
+    SELECT ${customerFields}
+    FROM customers
+    JOIN members ON members.id = customers.member_id
+    LEFT JOIN sales ON sales.customer_id = customers.id
+    ${where}
+    GROUP BY customers.id
+    ORDER BY customers.last_name, customers.first_name
+  `).all(...params).map(mapCustomer);
+
+  res.json({ customers });
+});
+
+app.post('/api/customers', (req, res) => {
+  const customer = normalizeCustomer(req.body);
+  const error = validateCustomer(customer);
+  if (error) return res.status(400).json({ error });
+
+  const result = db.prepare(`
+    INSERT INTO customers (
+      member_id, first_name, last_name, email, phone, city, state, status, source,
+      birthday, last_contact_date, next_follow_up_date, notes, updated_at
+    ) VALUES (
+      @memberId, @firstName, @lastName, @email, @phone, @city, @state, @status, @source,
+      @birthday, @lastContactDate, @nextFollowUpDate, @notes, CURRENT_TIMESTAMP
+    )
+  `).run(customer);
+
+  res.status(201).json({ customer: getCustomer(result.lastInsertRowid) });
+});
+
+app.put('/api/customers/:id', (req, res) => {
+  if (!getCustomer(req.params.id)) return res.status(404).json({ error: 'Customer not found.' });
+  const customer = normalizeCustomer(req.body);
+  const error = validateCustomer(customer);
+  if (error) return res.status(400).json({ error });
+
+  db.prepare(`
+    UPDATE customers SET
+      member_id = @memberId,
+      first_name = @firstName,
+      last_name = @lastName,
+      email = @email,
+      phone = @phone,
+      city = @city,
+      state = @state,
+      status = @status,
+      source = @source,
+      birthday = @birthday,
+      last_contact_date = @lastContactDate,
+      next_follow_up_date = @nextFollowUpDate,
+      notes = @notes,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = @id
+  `).run({ ...customer, id: Number(req.params.id) });
+
+  res.json({ customer: getCustomer(req.params.id) });
+});
+
+app.get('/api/customers/:id/report', (req, res) => {
+  const customer = getCustomer(req.params.id);
+  if (!customer) return res.status(404).json({ error: 'Customer not found.' });
+
+  const sales = db.prepare(`
+    SELECT ${saleFields}
+    FROM sales
+    JOIN members ON members.id = sales.member_id
+    LEFT JOIN customers ON customers.id = sales.customer_id
+    JOIN products ON products.id = sales.product_id
+    WHERE sales.customer_id = ?
+    ORDER BY sales.sale_date DESC, sales.id DESC
+  `).all(customer.id).map(mapSale);
+
+  const productBreakdown = db.prepare(`
+    SELECT
+      products.id AS product_id,
+      products.name AS product_name,
+      products.sku AS sku,
+      SUM(sales.quantity) AS units,
+      SUM(sales.quantity * sales.unit_price) AS sales_volume
+    FROM sales
+    JOIN products ON products.id = sales.product_id
+    WHERE sales.customer_id = ?
+    GROUP BY products.id
+    ORDER BY sales_volume DESC
+  `).all(customer.id);
+
+  res.json({ customer, sales, productBreakdown });
+});
+
+app.get('/api/customer-summary', (_req, res) => {
+  const summary = db.prepare(`
+    SELECT
+      COUNT(*) AS customer_count,
+      SUM(CASE WHEN status IN ('Lead', 'Prospect') THEN 1 ELSE 0 END) AS pipeline_count,
+      SUM(CASE WHEN status IN ('Customer', 'Preferred') THEN 1 ELSE 0 END) AS active_customer_count,
+      SUM(CASE WHEN next_follow_up_date IS NOT NULL AND next_follow_up_date != '' AND next_follow_up_date <= date('now') THEN 1 ELSE 0 END) AS due_follow_ups
+    FROM customers
+  `).get();
+
+  const byMember = db.prepare(`
+    SELECT
+      members.id AS member_id,
+      members.first_name || ' ' || members.last_name AS member_name,
+      COUNT(customers.id) AS customer_count,
+      COALESCE(SUM(sales.quantity * sales.unit_price), 0) AS sales_volume
+    FROM members
+    LEFT JOIN customers ON customers.member_id = members.id
+    LEFT JOIN sales ON sales.customer_id = customers.id
+    GROUP BY members.id
+    HAVING customer_count > 0
+    ORDER BY customer_count DESC, sales_volume DESC
+  `).all();
+
+  res.json({
+    summary: {
+      customerCount: summary.customer_count || 0,
+      pipelineCount: summary.pipeline_count || 0,
+      activeCustomerCount: summary.active_customer_count || 0,
+      dueFollowUps: summary.due_follow_ups || 0
+    },
+    byMember
+  });
+});
+
 app.get('/api/sales', (_req, res) => {
   const sales = db.prepare(`
     SELECT ${saleFields}
     FROM sales
     JOIN members ON members.id = sales.member_id
+    LEFT JOIN customers ON customers.id = sales.customer_id
     JOIN products ON products.id = sales.product_id
     ORDER BY sales.sale_date DESC, sales.id DESC
   `).all().map(mapSale);
@@ -251,9 +445,9 @@ app.post('/api/sales', (req, res) => {
   const transaction = db.transaction(() => {
     const result = db.prepare(`
       INSERT INTO sales (
-        member_id, product_id, quantity, unit_price, commission_rate, sale_date, customer_name, notes
+        member_id, customer_id, product_id, quantity, unit_price, commission_rate, sale_date, customer_name, notes
       ) VALUES (
-        @memberId, @productId, @quantity, @unitPrice, @commissionRate, @saleDate, @customerName, @notes
+        @memberId, @customerId, @productId, @quantity, @unitPrice, @commissionRate, @saleDate, @customerName, @notes
       )
     `).run(sale);
 
@@ -271,6 +465,7 @@ app.post('/api/sales', (req, res) => {
     SELECT ${saleFields}
     FROM sales
     JOIN members ON members.id = sales.member_id
+    LEFT JOIN customers ON customers.id = sales.customer_id
     JOIN products ON products.id = sales.product_id
     WHERE sales.id = ?
   `).get(saleId);
