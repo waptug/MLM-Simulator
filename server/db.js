@@ -34,6 +34,39 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_members_sponsor_id ON members(sponsor_id);
   CREATE INDEX IF NOT EXISTS idx_members_status ON members(status);
+
+  CREATE TABLE IF NOT EXISTS products (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sku TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    category TEXT,
+    unit_price REAL NOT NULL DEFAULT 0,
+    commission_rate REAL NOT NULL DEFAULT 0,
+    stock_on_hand INTEGER NOT NULL DEFAULT 0,
+    reorder_level INTEGER NOT NULL DEFAULT 0,
+    active INTEGER NOT NULL DEFAULT 1,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS sales (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    member_id INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+    quantity INTEGER NOT NULL DEFAULT 1,
+    unit_price REAL NOT NULL DEFAULT 0,
+    commission_rate REAL NOT NULL DEFAULT 0,
+    sale_date TEXT NOT NULL,
+    customer_name TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_products_active ON products(active);
+  CREATE INDEX IF NOT EXISTS idx_sales_member_id ON sales(member_id);
+  CREATE INDEX IF NOT EXISTS idx_sales_product_id ON sales(product_id);
+  CREATE INDEX IF NOT EXISTS idx_sales_sale_date ON sales(sale_date);
 `);
 
 const count = db.prepare('SELECT COUNT(*) AS total FROM members').get().total;
@@ -148,6 +181,95 @@ if (count === 0) {
   });
 }
 
+const productCount = db.prepare('SELECT COUNT(*) AS total FROM products').get().total;
+
+if (productCount === 0) {
+  const insertProduct = db.prepare(`
+    INSERT INTO products (
+      sku, name, category, unit_price, commission_rate, stock_on_hand, reorder_level, active, notes
+    ) VALUES (
+      @sku, @name, @category, @unitPrice, @commissionRate, @stockOnHand, @reorderLevel, @active, @notes
+    )
+  `);
+  const addProduct = (product) => insertProduct.run(product).lastInsertRowid;
+
+  const starterKitId = addProduct({
+    sku: 'KIT-STARTER',
+    name: 'Starter Wellness Kit',
+    category: 'Kits',
+    unitPrice: 129,
+    commissionRate: 0.18,
+    stockOnHand: 42,
+    reorderLevel: 10,
+    active: 1,
+    notes: 'Common first purchase bundle.'
+  });
+  const shakeId = addProduct({
+    sku: 'NUTR-SHAKE',
+    name: 'Daily Nutrition Shake',
+    category: 'Nutrition',
+    unitPrice: 64,
+    commissionRate: 0.12,
+    stockOnHand: 86,
+    reorderLevel: 20,
+    active: 1,
+    notes: 'Monthly reorder product.'
+  });
+  const guideId = addProduct({
+    sku: 'GUIDE-DIGITAL',
+    name: 'Digital Coaching Guide',
+    category: 'Digital',
+    unitPrice: 39,
+    commissionRate: 0.3,
+    stockOnHand: 999,
+    reorderLevel: 0,
+    active: 1,
+    notes: 'Digital delivery.'
+  });
+
+  const memberRows = db.prepare('SELECT id FROM members ORDER BY id LIMIT 3').all();
+  const insertSale = db.prepare(`
+    INSERT INTO sales (
+      member_id, product_id, quantity, unit_price, commission_rate, sale_date, customer_name, notes
+    ) VALUES (
+      @memberId, @productId, @quantity, @unitPrice, @commissionRate, @saleDate, @customerName, @notes
+    )
+  `);
+
+  if (memberRows.length) {
+    insertSale.run({
+      memberId: memberRows[0].id,
+      productId: starterKitId,
+      quantity: 2,
+      unitPrice: 129,
+      commissionRate: 0.18,
+      saleDate: '2026-04-01',
+      customerName: 'Retail Customer',
+      notes: 'Launch event sale.'
+    });
+    insertSale.run({
+      memberId: memberRows[1]?.id || memberRows[0].id,
+      productId: shakeId,
+      quantity: 4,
+      unitPrice: 64,
+      commissionRate: 0.12,
+      saleDate: '2026-04-12',
+      customerName: 'Monthly autoship',
+      notes: ''
+    });
+    insertSale.run({
+      memberId: memberRows[2]?.id || memberRows[0].id,
+      productId: guideId,
+      quantity: 1,
+      unitPrice: 39,
+      commissionRate: 0.3,
+      saleDate: '2026-04-18',
+      customerName: 'Online buyer',
+      notes: ''
+    });
+  }
+}
+
 export function mapMember(row) {
   if (!row) return null;
   return {
@@ -168,5 +290,46 @@ export function mapMember(row) {
     notes: row.notes || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at
+  };
+}
+
+export function mapProduct(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    sku: row.sku,
+    name: row.name,
+    category: row.category || '',
+    unitPrice: row.unit_price,
+    commissionRate: row.commission_rate,
+    stockOnHand: row.stock_on_hand,
+    reorderLevel: row.reorder_level,
+    active: Boolean(row.active),
+    notes: row.notes || '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+export function mapSale(row) {
+  if (!row) return null;
+  const lineTotal = row.quantity * row.unit_price;
+  const commission = lineTotal * row.commission_rate;
+  return {
+    id: row.id,
+    memberId: row.member_id,
+    productId: row.product_id,
+    memberName: row.member_name || '',
+    productName: row.product_name || '',
+    sku: row.sku || '',
+    quantity: row.quantity,
+    unitPrice: row.unit_price,
+    commissionRate: row.commission_rate,
+    lineTotal,
+    commission,
+    saleDate: row.sale_date,
+    customerName: row.customer_name || '',
+    notes: row.notes || '',
+    createdAt: row.created_at
   };
 }
